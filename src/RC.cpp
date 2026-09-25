@@ -818,7 +818,7 @@ void RC::initiator() {
         bool with_imm     = opcode == IBV_WR_SEND_WITH_IMM || opcode == IBV_WR_RDMA_WRITE_WITH_IMM;
         bool with_payload = opcode != IBV_WR_RDMA_READ; 
 
-        if (rdma_counter == max_batch_rdma && is_rdma) {
+        if (rdma_counter == max_batch_rdma && opcode == IBV_WR_RDMA_READ) {
             opcode       = IBV_WR_SEND;
             is_rdma      = false;
             with_imm     = false;
@@ -858,7 +858,9 @@ void RC::initiator() {
         if (is_rdma) {
             wr.wr.rdma.remote_addr = remote_mr_info.mr_start_addr + (message_length * wr_i);
             wr.wr.rdma.rkey        = remote_mr_info.r_key;
-            rdma_counter++;
+            
+            if (wr.opcode == IBV_WR_RDMA_READ)
+                rdma_counter++;
 
                 //---------//
                 // SUCCESS //
