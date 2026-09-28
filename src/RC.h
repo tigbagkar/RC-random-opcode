@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <string>
+#include <vector>
 #include <infiniband/verbs.h>
 #include "TcpChannel.h"
 
@@ -23,6 +24,16 @@ struct MRInfo {
 	uint64_t mr_start_addr;
 };
 
+struct MessageInfo {
+    void*  start_addr;
+    size_t length;
+};
+
+struct RemoteMessageInfo {
+    uint64_t start_addr;
+    size_t   length;
+};
+
 struct RecvExp {
     bool          recv_wr_required;
     bool          with_imm;
@@ -34,20 +45,21 @@ struct RecvExp {
 
 class RC {
 	private:
-		bool         is_initiator = false;
-		ibv_device  *device       = nullptr;
-		ibv_context *context      = nullptr;
-		ibv_pd      *pd           = nullptr;
-		void        *buffer       = nullptr;
-		ibv_mr      *mr           = nullptr;
-		ibv_cq      *cq           = nullptr;
-		ibv_qp      *qp           = nullptr;
-		TcpChannel   channel;
-        MRInfo       remote_mr_info;
-        int          max_batch_wr;
-        int          max_batch_rdma;
-        int          max_sge;
-        int          message_length;
+		bool                           is_initiator = false;
+		ibv_device                    *device       = nullptr;
+		ibv_context                   *context      = nullptr;
+		ibv_pd                        *pd           = nullptr;
+		void                          *buffer       = nullptr;
+		ibv_mr                        *mr           = nullptr;
+		ibv_cq                        *cq           = nullptr;
+		ibv_qp                        *qp           = nullptr;
+		TcpChannel                     channel;
+        MRInfo                         remote_mr_info;
+        int                            max_batch_wr;
+        int                            max_batch_rdma;
+        int                            max_sge;
+        std::vector<MessageInfo>       addrs;
+        std::vector<RemoteMessageInfo> remote_addrs;
 
         void        fillBuffer(void* buff_start_addr, size_t length, uint64_t wr_id);
         uint32_t    calcCrc32(void* buff_start_addr, size_t length);
@@ -62,20 +74,8 @@ class RC {
 		~RC();
 
 		void init(
-			bool is_initiator, 
-            int      requested_max_cq_size,
-            int      required_min_cq_size,
-            int      requested_max_send_wr,
-            int      required_min_send_wr,
-            int      requested_max_recv_wr,
-            int      required_min_recv_wr,
-            int      requested_max_send_sge,
-            int      required_min_send_sge,
-            int      requested_max_recv_sge,
-            int      required_min_recv_sge,
-            uint32_t psn,
-            int      packets_amount_per_message
-		);
+			bool is_initiator		
+            );
 			
 		void initiator();
 		

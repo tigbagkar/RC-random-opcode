@@ -20,19 +20,7 @@ RC::~RC() {
 }
 
 void RC::init(
-    bool     is_initiator,
-    int      requested_max_cqe,
-    int      required_min_cqe,
-    int      requested_max_send_wr,
-    int      required_min_send_wr,
-    int      requested_max_recv_wr,
-    int      required_min_recv_wr,
-    int      requested_max_send_sge,
-    int      required_min_send_sge,
-    int      requested_max_recv_sge,
-    int      required_min_recv_sge,
-    uint32_t psn,
-    int      packets_amount_per_message
+    bool is_initiator
     ) {
     
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -42,7 +30,35 @@ void RC::init(
 
     this->is_initiator = is_initiator;
 	
-	int ret = 0;
+    int requested_max_cqe      =                 64;
+    int required_min_cqe       =                 16;
+    int requested_max_send_wr  =  is_initiator ? 64 : 0;
+    int required_min_send_wr   =  is_initiator ? 16 : 0;
+    int requested_max_recv_wr  = !is_initiator ? 64 : 0;
+    int required_min_recv_wr   = !is_initiator ? 16 : 0;
+    int requested_max_send_sge =  is_initiator ?  8 : 0;
+    int required_min_send_sge  =  is_initiator ?  2 : 0;
+    int requested_max_recv_sge = !is_initiator ?  8 : 0;
+    int required_min_recv_sge  = !is_initiator ?  2 : 0;
+    int psn                    = is_initiator  ?  0 : 1000;
+
+    int ret                  = 0;
+    int actual_max_cqe       = 0;
+    int actual_max_wr        = 0;
+    int local_max_batch_wr   = 0;
+    int local_max_batch_rdma = 0;
+
+    std::cout << "    initialization data"                                    << "\n" <<
+                 "        requested_max_cqe:      " << requested_max_cqe      << "\n" <<      
+                 "        required_min_cqe:       " << required_min_cqe       << "\n" <<
+                 "        requested_max_send_wr:  " << requested_max_send_wr  << "\n" <<
+                 "        required_min_send_wr:   " << required_min_send_wr   << "\n" <<  
+                 "        requested_max_recv_wr:  " << requested_max_recv_wr  << "\n" << 
+                 "        required_min_recv_wr:   " << required_min_recv_wr   << "\n" << 
+                 "        requested_max_send_sge: " << requested_max_send_sge << "\n" << 
+                 "        required_min_send_sge:  " << required_min_send_sge  << "\n" << 
+                 "        requested_max_recv_sge: " << requested_max_recv_sge << "\n" << 
+                 "        required_min_recv_sge:  " << required_min_recv_sge  << "\n\n";
 
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     //////////////////// OPEN AND QUERY DEVICE /////////////////////////////////////////////////////////////////////////////
@@ -57,7 +73,7 @@ void RC::init(
 		throw std::runtime_error("[ERROR][INIT] ibv_open_device() failed");
 
         //--------------//
-        // QUEUE DEVUCE //
+        // QUEUE DEVICE //
         //--------------//
     ibv_device_attr device_attr{};
 	ret = ibv_query_device(context, &device_attr);	
@@ -109,7 +125,8 @@ void RC::init(
         //------------------------------//
     if (requested_max_cqe > device_attr.max_cqe) 
         requested_max_cqe = device_attr.max_cqe;
-        
+    actual_max_cqe = requested_max_cqe;
+
         //-------------------------------//
         // CQ OVERFLOW PROTECTION CHECKS //
         //-------------------------------//
@@ -140,10 +157,10 @@ void RC::init(
         //---------//
         // SUCCESS //
         //---------//
-    std::cout << "    cq created succesfully"             << "\n" <<
-                 "        cq:      " << cq                << "\n" <<
-                 "        max_cqe: " << requested_max_cqe << "\n" << 
-                 "        context: " << cq->context       << "\n\n";
+    std::cout << "    cq created succesfully"          << "\n" <<
+                 "        cq:      " << cq             << "\n" <<
+                 "        max_cqe: " << actual_max_cqe << "\n" << 
+                 "        context: " << cq->context    << "\n\n";
     
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     //////////////////// CREATE QP /////////////////////////////////////////////////////////////////////////////////////////
@@ -229,11 +246,17 @@ void RC::init(
             "more than actual qp max_recv_sge:    " + std::to_string(qp_init_attr.cap.max_recv_sge)
             );
     
-    if (is_initiator)
-        max_sge = qp_init_attr.cap.max_send_sge;
-    else 
-        max_sge = qp_init_attr.cap.max_recv_sge; 
-
+    if (is_initiator) {
+        actual_max_wr        = qp_init_attr.cap.max_send_wr;
+        max_sge              = qp_init_attr.cap.max_send_sge;
+        local_max_batch_rdma = device_attr.max_qp_init_rd_atom;
+    }
+    else {
+        actual_max_wr        = qp_init_attr.cap.max_recv_wr;
+        max_sge              = qp_init_attr.cap.max_recv_sge;
+        local_max_batch_rdma = device_attr.max_res_rd_atom;
+    } 
+         
         //---------//
         // SUCCESS //
         //---------//
@@ -316,7 +339,7 @@ void RC::init(
 		}
 	}
 	if (!found) 
-		throw std::runtime_error("[ERROR][INIT] suitable port not found");
+		throw std::runtime_error("[ERROR][INIT] suitable port and gid not found");
 
     char local_gid_str[INET6_ADDRSTRLEN];
     inet_ntop(AF_INET6, gid.raw, local_gid_str, sizeof(local_gid_str));
@@ -324,7 +347,7 @@ void RC::init(
         //---------//
         // SUCCESS //
         //---------//
-    std::cout << "    suitable port found"                           << "\n" <<
+    std::cout << "    suitable port and gid found"                   << "\n" <<
                  "        port_num:  " << static_cast<int>(port_num) << "\n" <<
                  "        mtu:       " << mtu                        << "\n" <<
                  "        gid_index: " << gid_index                  << "\n" <<
@@ -335,23 +358,13 @@ void RC::init(
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     std::cout << "[INIT] LOCAL CQ OVERFLOW PROTECTION CHECK" << "\n";
 
-    int local_max_batch_wr = 0;
-
         //-----------------------------------//
         // CQ OVERFLOW PROTECTION CORRECTION //
         //-----------------------------------//
-    if (is_initiator) {
-        if (qp_init_attr.cap.max_send_wr > requested_max_cqe)
-            local_max_batch_wr = requested_max_cqe;
-        else
-            local_max_batch_wr = qp_init_attr.cap.max_send_wr;
-    }
-    else {
-        if (qp_init_attr.cap.max_recv_wr > requested_max_cqe)
-            local_max_batch_wr = requested_max_cqe;
-        else 
-            local_max_batch_wr = qp_init_attr.cap.max_recv_wr;
-    }
+    if (actual_max_wr > actual_max_cqe)
+        local_max_batch_wr = actual_max_cqe;
+    else
+        local_max_batch_wr = actual_max_wr;
 
         //---------//
         // SUCCESS //
@@ -385,38 +398,34 @@ void RC::init(
         //---------//
         // SUCCESS //
         //---------//
+    char remote_gid_str[INET6_ADDRSTRLEN];
+    inet_ntop(AF_INET6, remote_connection_info.gid.raw, remote_gid_str, sizeof(remote_gid_str));
+
     std::cout << "    send connection info"                   << "\n" <<
                  "        qpn: " << local_connection_info.qpn << "\n" <<
                  "        psn: " << local_connection_info.psn << "\n" <<
                  "        gid: " << local_gid_str             << "\n";
-
-    char remote_gid_str[INET6_ADDRSTRLEN];
-    inet_ntop(AF_INET6, remote_connection_info.gid.raw, remote_gid_str, sizeof(remote_gid_str));
 
     std::cout << "    recv connection info"                    << "\n" <<
                  "        qpn: " << remote_connection_info.qpn << "\n" <<
                  "        psn: " << remote_connection_info.psn << "\n" <<
                  "        gid: " << remote_gid_str             << "\n\n";
 
-
         //-------------------//
         // EXCHANGE CAP INFO //
         //-------------------//
     CapInfo local_cap_info{
-        .mtu = mtu,
-        .max_batch_wr = local_max_batch_wr
+        .mtu            = mtu,
+        .max_batch_wr   = local_max_batch_wr,
+        .max_batch_rdma = local_max_batch_rdma
     };
-    CapInfo remote_cap_info{};
+    CapInfo remote_cap_info{};  
 
     if (is_initiator) {
-        local_cap_info.max_batch_rdma = device_attr.max_qp_init_rd_atom;
-        
         channel.send(local_cap_info);
 		remote_cap_info = channel.receive<CapInfo>();
 	}
 	else {
-        local_cap_info.max_batch_rdma = device_attr.max_res_rd_atom;
-		
         remote_cap_info = channel.receive<CapInfo>();
 		channel.send(local_cap_info);	
 	}
@@ -455,18 +464,10 @@ void RC::init(
         //-------------------------------------------------//
         // OUTSTANDING RDMA OVERFLOW PROTECTION CORRECTION //
         //-------------------------------------------------//
-    if (is_initiator) {
-        if (device_attr.max_qp_init_rd_atom > remote_cap_info.max_batch_rdma)
-            max_batch_rdma = remote_cap_info.max_batch_rdma;
-        else
-            max_batch_rdma = device_attr.max_qp_init_rd_atom;
-    }
-    else {
-        if (device_attr.max_res_rd_atom > remote_cap_info.max_batch_rdma)
-            max_batch_rdma = remote_cap_info.max_batch_rdma;
-        else
-            max_batch_rdma = device_attr.max_res_rd_atom;
-    }
+    if (local_cap_info.max_batch_rdma > remote_cap_info.max_batch_rdma)
+        max_batch_rdma = remote_cap_info.max_batch_rdma;
+    else
+        max_batch_rdma = local_cap_info.max_batch_rdma;
 
         //---------//
         // SUCCESS //
@@ -478,38 +479,61 @@ void RC::init(
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     std::cout << "[INIT] ALLOCATE BUFFER" << "\n";
 
-        //---------------------//
-        // CALCULATE BUFF SIZE //
-        //---------------------//
-    size_t buff_size = max_batch_wr;
+        //-----------------------------------------//
+        // CALCULATE BUFF SIZE AND MESSAGES LENGTH //
+        //-----------------------------------------//    
+    size_t  buff_size = 0;
+    ibv_mtu pmtu      = mtu > remote_cap_info.mtu ? remote_cap_info.mtu : mtu;
+    
+    if (is_initiator) {
+        int     int_pmtu  = 0;
+        switch(pmtu) {
+            case IBV_MTU_256:
+                int_pmtu = 256;
+                break;
+            case IBV_MTU_512:
+                int_pmtu = 512;
+                break;
+            case IBV_MTU_1024:
+                int_pmtu = 1024;
+                break;
+            case IBV_MTU_2048:
+                int_pmtu = 2048;
+                break;
+            case IBV_MTU_4096:
+                int_pmtu = 4096;
+        }
 
-    ibv_mtu pmtu = mtu > remote_cap_info.mtu ? remote_cap_info.mtu : mtu;
+        std::random_device                 last_packet_size_rd;
+        std::mt19937                       last_packet_size_gen(last_packet_size_rd());
+        std::uniform_int_distribution<int> last_packet_size_dist(max_sge, int_pmtu);
 
-    switch(pmtu) {
-        case IBV_MTU_256:
-            buff_size     *= 256;
-            message_length = 256;
-            break;
-        case IBV_MTU_512:
-            buff_size     *= 512;
-            message_length = 512;
-            break;
-        case IBV_MTU_1024:
-            buff_size     *= 1024;
-            message_length = 1024;
-            break;
-        case IBV_MTU_2048:
-            buff_size     *= 2048;
-            message_length = 2048;
-            break;
-        case IBV_MTU_4096:
-            buff_size     *= 4096;
-            message_length = 4096;
+        std::random_device                 packets_per_message_rd;
+        std::mt19937                       packets_per_message_gen(packets_per_message_rd());
+        std::uniform_int_distribution<int> packets_per_message_dist(0, 7);
+
+        addrs.resize(max_batch_wr);
+        for (int wr_i = 0; wr_i < max_batch_wr; wr_i++) {
+            int last_packet_size    = last_packet_size_dist(last_packet_size_gen);
+            int packets_per_message = packets_per_message_dist(packets_per_message_gen);
+            size_t length           = last_packet_size + int_pmtu * packets_per_message;
+    
+            channel.send(length);
+
+            addrs[wr_i].length = length;
+            buff_size         += length;
+        }
     }
+    else {
+        addrs.resize(max_batch_wr);
+        for (int wr_i = 0; wr_i < max_batch_wr; wr_i++) {
+            size_t length = channel.receive<size_t>();
 
-    buff_size      *= packets_amount_per_message;
-    message_length *= packets_amount_per_message;
-
+            addrs[wr_i].length = length;
+            buff_size         += length;
+        }
+    }
+    
         //-----------------//
         // ALLOCATE BUFFER //
         //-----------------//
@@ -517,6 +541,14 @@ void RC::init(
 	if (buffer == nullptr) 
 		throw std::runtime_error("[ERROR][INIT] malloc() failed");
 
+        //---------------------------//
+        // CALCULATE LOCAL ADDRESSES //
+        //---------------------------//
+    void *offset = buffer;
+    for (int wr_i = 0; wr_i < max_batch_wr; wr_i++) {
+        addrs[wr_i].start_addr = offset;
+        offset += addrs[wr_i].length; 
+    }
         //---------//
         // SUCCESS //
         //---------//
@@ -587,6 +619,19 @@ void RC::init(
                      "        r_key:         " << local_mr_info.r_key         << "\n" <<
                      "        mr_start_addr: " << local_mr_info.mr_start_addr << "\n\n";
     }
+        //----------------------------//
+        // CALCULATE REMOTE ADDRESSES //
+        //----------------------------//
+    if (is_initiator) {
+        remote_addrs.resize(max_batch_wr);
+
+        uint64_t offset = remote_mr_info.mr_start_addr;
+        for (int wr_i = 0; wr_i < max_batch_wr; wr_i++) {
+            remote_addrs[wr_i].length     = addrs[wr_i].length;
+            remote_addrs[wr_i].start_addr = offset;
+            offset                       += remote_addrs[wr_i].length;
+        }
+    } 
 
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     //////////////////// RESET -> INIT QP STATE TRANSITION /////////////////////////////////////////////////////////////////
@@ -758,7 +803,7 @@ void RC::initiator() {
             // GET SGE AMOUNT AND CALCULATE LENGTH //
             //-------------------------------------//
         int sge_amount = sge_dist(sge_gen);
-        int sge_length = message_length / sge_amount;
+        int sge_length = addrs[wr_i].length / sge_amount;
         sges[wr_i].resize(sge_amount);
         
             //----------//
@@ -770,15 +815,15 @@ void RC::initiator() {
                 // CREATE SGE //
                 //------------//
             ibv_sge &sge = sges[wr_i][sge_i];
-            sge.addr   = reinterpret_cast<uint64_t>(buffer) + (message_length * wr_i) + (sge_length * sge_i);
-            sge.length = sge_length;
-            sge.lkey   = mr->lkey;
+            sge.addr     = reinterpret_cast<uint64_t>(addrs[wr_i].start_addr) + (sge_length * sge_i);
+            sge.length   = sge_length;
+            sge.lkey     = mr->lkey;
 
                 //----------------------------//
                 // LAST SGE LENGTH CORRECTION //
                 //----------------------------//
             if (sge_i == sge_amount-1)
-                sge.length = message_length - (sge_length * sge_i);
+                sge.length = addrs[wr_i].length - (sge_length * sge_i);
 
                 //---------//
                 // SUCCESS //
@@ -830,8 +875,8 @@ void RC::initiator() {
             //---------------------------------//
         uint32_t crc32 = 0;    
         if (with_payload) {
-            fillBuffer(buffer + (message_length * wr_i), message_length, wr_i);
-            crc32 = calcCrc32(buffer + (message_length * wr_i), message_length);
+            fillBuffer(addrs[wr_i].start_addr, addrs[wr_i].length, wr_i);
+            crc32 = calcCrc32(addrs[wr_i].start_addr, addrs[wr_i].length);
         }
 
             //-----------//
@@ -856,10 +901,10 @@ void RC::initiator() {
             // ADD RDMA ATTRS //
             //----------------//
         if (is_rdma) {
-            wr.wr.rdma.remote_addr = remote_mr_info.mr_start_addr + (message_length * wr_i);
+            wr.wr.rdma.remote_addr = remote_addrs[wr_i].start_addr;
             wr.wr.rdma.rkey        = remote_mr_info.r_key;
             
-            if (wr.opcode == IBV_WR_RDMA_READ)
+            if (opcode == IBV_WR_RDMA_READ)
                 rdma_counter++;
 
                 //---------//
@@ -1045,7 +1090,7 @@ void RC::initiator() {
             // CRC CHECK //
             //-----------//
         if (exps[wr_i].with_payload) {
-            uint32_t crc32 = calcCrc32(buffer + (message_length * wr_i), message_length);
+            uint32_t crc32 = calcCrc32(addrs[wr_i].start_addr, addrs[wr_i].length);
             if (crc32 != exps[wr_i].crc32) 
                 throw std::runtime_error(
                     "[ERROR][INITIATOR] local crc32: " + std::to_string(crc32) + "\n" +
@@ -1112,8 +1157,8 @@ void RC::target() {
             // FILL BUFFER AND CALCULATE AND SEND CRC32 TO INITIATOR //
             //-------------------------------------------------------//
         if (!exps[wr_i].with_payload) {
-            fillBuffer(buffer + (message_length * wr_i), message_length, wr_i);
-            uint32_t crc32 = calcCrc32(buffer + (message_length * wr_i), message_length);
+            fillBuffer(addrs[wr_i].start_addr, addrs[wr_i].length, wr_i);
+            uint32_t crc32 = calcCrc32(addrs[wr_i].start_addr, addrs[wr_i].length);
             
             RecvExp exp{};
             exp.with_payload     = true;
@@ -1132,7 +1177,7 @@ void RC::target() {
             // GET SGE AMOUNT AND CALCULATE LENGTH //
             //-------------------------------------//
         int sge_amount = sge_dist(sge_gen);
-        int sge_length = message_length / sge_amount;
+        int sge_length = addrs[wr_i].length / sge_amount;
         sges[wr_i].resize(sge_amount);
             
             //----------//
@@ -1144,7 +1189,7 @@ void RC::target() {
                 // CREATE SGE //
                 //------------//
             ibv_sge &sge = sges[wr_i][sge_i];
-            sge.addr   = reinterpret_cast<uint64_t>(buffer) + (message_length * wr_i) + (sge_length * sge_i);
+            sge.addr   = reinterpret_cast<uint64_t>(addrs[wr_i].start_addr) + (sge_length * sge_i);
             sge.length = sge_length;
             sge.lkey   = mr->lkey;
 
@@ -1152,7 +1197,7 @@ void RC::target() {
                 // LAST SGE LENGTH CORRECTION //
                 //----------------------------//
             if (sge_i == sge_amount-1)
-                sge.length = message_length - (sge_length * sge_i);
+                sge.length = addrs[wr_i].length - (sge_length * sge_i);
                 
                 //---------//
                 // SUCCESS //
@@ -1320,16 +1365,16 @@ void RC::target() {
             //----------------//
             // BYTE LEN CHECK //
             //----------------//
-        if (wc.byte_len != message_length)
+        if (wc.byte_len != addrs[wr_i].length)
             throw std::runtime_error(
                 "[ERROR][TARGET] wc.byte_len:       " + std::to_string(wc.byte_len) + "\n" +
-                "is not matching expected byte_len: " + std::to_string(message_length)
+                "is not matching expected byte_len: " + std::to_string(addrs[wr_i].length)
                 );
         
             //---------//
             // SUCCESS //
             //---------//
-        std::cout << "        byte_len: " << wc.byte_len << " exp: " << message_length << " | passed check" << "\n";
+        std::cout << "        byte_len: " << wc.byte_len << " exp: " << addrs[wr_i].length << " | passed check" << "\n";
             
             //-----------//
             // IMM CHECK //
@@ -1366,7 +1411,7 @@ void RC::target() {
             //-----------//
         if (exps[wr_i].with_payload) {
             std::cout << "    wr " << wr_i << " crc check" << "\n";
-            uint32_t crc32 = calcCrc32(buffer + (message_length * wr_i), message_length);
+            uint32_t crc32 = calcCrc32(addrs[wr_i].start_addr, addrs[wr_i].length);
             if (crc32 != exps[wr_i].crc32) 
                 throw std::runtime_error(
                     "[ERROR][TARGET] local crc32:  " + std::to_string(crc32) + "\n" +

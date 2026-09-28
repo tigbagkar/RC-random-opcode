@@ -24,34 +24,10 @@ int main() {
 		
         RC target(device, channel);
 
-		bool     is_initiator               = false;
-        int      requested_max_cq_size      = 8;
-        int      required_min_cq_size       = 2;
-        int      requested_max_send_wr      = 0;
-        int      required_min_send_wr       = 0;
-        int      requested_max_recv_wr      = 8;
-        int      required_min_recv_wr       = 2;
-        int      requested_max_send_sge     = 0;
-        int      required_min_send_sge      = 0;
-        int      requested_max_recv_sge     = 3;
-        int      required_min_recv_sge      = 1;
-        uint32_t psn                        = 1000;
-        int      packets_amount_per_message = 4;
+		bool     is_initiator = false;
         
         target.init(
-			is_initiator, 
-            requested_max_cq_size,
-            required_min_cq_size,
-            requested_max_send_wr,
-            required_min_send_wr,
-            requested_max_recv_wr,
-            required_min_recv_wr,
-            requested_max_send_sge,
-            required_min_send_sge,
-            requested_max_recv_sge,
-            required_min_recv_sge,
-            psn,
-            packets_amount_per_message
+			is_initiator 
 		);
 
         target.target();
